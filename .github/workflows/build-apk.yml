@@ -1,0 +1,144 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git zip unzip openjdk-8-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+        sudo apt-get install -y ffmpeg
+        
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install buildozer cython
+        
+    - name: Create app icon
+      run: |
+        # Create a simple app icon if none exists
+        python3 -c "
+        from PIL import Image, ImageDraw, ImageFont
+        import os
+        
+        if not os.path.exists('icon.png'):
+            # Create 512x512 icon with download symbol
+            img = Image.new('RGBA', (512, 512), (33, 37, 41, 255))  # Dark background
+            draw = ImageDraw.Draw(img)
+            
+            # Draw download arrow
+            arrow_points = [
+                (256, 150), (200, 250), (230, 250), (230, 300),
+                (282, 300), (282, 250), (312, 250)
+            ]
+            draw.polygon(arrow_points, fill=(0, 123, 255, 255))  # Blue arrow
+            
+            # Draw base line
+            draw.rectangle([180, 320, 332, 340], fill=(0, 123, 255, 255))
+            
+            img.save('icon.png')
+            print('Created app icon')
+        
+        if not os.path.exists('presplash.png'):
+            # Create splash screen
+            splash = Image.new('RGBA', (512, 512), (33, 37, 41, 255))
+            splash.save('presplash.png')
+            print('Created splash screen')
+        "
+    
+    - name: Build APK with Buildozer
+      run: |
+        # Initialize buildozer
+        buildozer init || true
+        
+        # Update buildozer.spec for our app
+        cat > buildozer.spec << 'EOF'
+        [app]
+        title = Video Downloader
+        package.name = videodownloader
+        package.domain = com.personal.videodownloader
+        
+        source.dir = .
+        source.include_exts = py,png,jpg,kv,atlas,html,css,js,txt,md
+        
+        version = 1.0
+        
+        requirements = python3,kivy,flask,flask-sqlalchemy,yt-dlp,sqlalchemy,werkzeug,requests,urllib3,setuptools,certifi,charset-normalizer,idna,jinja2,markupsafe,itsdangerous,click,blinker,typing-extensions,greenlet
+        
+        android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,WAKE_LOCK,ACCESS_NETWORK_STATE
+        android.api = 30
+        android.minapi = 21
+        android.ndk = 25b
+        android.sdk = 30
+        android.accept_sdk_license = True
+        android.gradle_dependencies = 
+        
+        icon.filename = %(source.dir)s/icon.png
+        presplash.filename = %(source.dir)s/presplash.png
+        
+        orientation = portrait
+        
+        [buildozer]
+        log_level = 2
+        EOF
+        
+        # Set main.py to kivy_main.py
+        ln -sf kivy_main.py main.py
+        
+        # Build the APK
+        buildozer android debug
+    
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: video-downloader-apk
+        path: bin/*.apk
+        
+    - name: Create Release
+      if: github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v1.0-${{ github.run_number }}
+        name: Video Downloader v1.0-${{ github.run_number }}
+        body: |
+          ## Video Downloader APK
+          
+          **Features:**
+          - Download from YouTube, Instagram, TikTok, Twitter, Facebook, Telegram
+          - Multiple format support (MP4, MP3, WebM)
+          - Batch downloading
+          - Mobile-optimized interface
+          - Real-time progress tracking
+          - Local storage
+          
+          **Installation:**
+          1. Download the APK file below
+          2. Enable "Unknown Sources" in Android settings
+          3. Install the APK
+          4. Grant storage permissions
+          5. Start downloading videos!
+          
+          **System Requirements:**
+          - Android 5.0+ (API 21+)
+          - 100MB free storage
+          - Internet connection for downloads
+        files: bin/*.apk
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
